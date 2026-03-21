@@ -51,7 +51,11 @@ async def process(
                         zipf.writestr(f"c_{i}.pdf", cb.getvalue())
 
             zip_buffer.seek(0)
-            return StreamingResponse(zip_buffer, media_type="application/zip")
+            return StreamingResponse(
+                zip_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": "attachment; filename=output.zip"}
+            )
 
         # single PDF
         s, inv = process_page(pages[0], size)
@@ -60,7 +64,11 @@ async def process(
         s.save(buffer, "PDF", save_all=True, append_images=[inv])
         buffer.seek(0)
 
-        return StreamingResponse(buffer, media_type="application/pdf")
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=output.pdf"}
+        )
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -70,28 +78,33 @@ async def process(
 # PREVIEW
 # =========================
 @app.post("/preview")
-async def preview(file: UploadFile = File(...), size: str = Form(...), output: str = Form(...)):
+async def preview(
+    file: UploadFile = File(...),
+    size: str = Form(...),
+    output: str = Form(...)
+):
     try:
-        contents = await file.read()
-
-        doc = fitz.open(stream=contents, filetype="pdf")
+        pdf_bytes = await file.read()
+        pages = pdf_to_images(pdf_bytes)
 
         images = []
 
-        for page in doc:
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            img_bytes = pix.tobytes("png")
+        for page in pages[:1]:
+            shipping, invoice = process_page(page, size)
 
             import base64
-            images.append(base64.b64encode(img_bytes).decode())
+            buf1, buf2 = io.BytesIO(), io.BytesIO()
 
-            if len(images) >= 2:
-                break
+            shipping.save(buf1, format="PNG")
+            invoice.save(buf2, format="PNG")
+
+            images.append(base64.b64encode(buf1.getvalue()).decode())
+            images.append(base64.b64encode(buf2.getvalue()).decode())
 
         return {"images": images}
 
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/")
 def home():
