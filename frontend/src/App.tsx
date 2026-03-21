@@ -24,28 +24,28 @@ function App() {
   // ================= ORIGINAL PREVIEW =================
   const generatePreview = async (file: File) => {
     try {
-      const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("size", size);
+      formData.append("output", output);
 
-      const urls: string[] = [];
+      const res = await fetch(`${API_URL}/preview`, {
+        method: "POST",
+        body: formData,
+      });
 
-      for (let i = 1; i <= Math.min(2, pdf.numPages); i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1 });
+      if (!res.ok) throw new Error("Preview failed");
 
-        const canvas = document.createElement("canvas");
-        const context = canvas.getContext("2d")!;
+      const data = await res.json();
 
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+      if (data.error) throw new Error(data.error);
 
-        await page.render({ canvasContext: context, viewport, canvas }).promise;
-
-        urls.push(canvas.toDataURL());
-      }
-
-      setPreviewUrls(urls);
-    } catch {
-      alert("Preview failed ❌");
+      setPreviewUrls(
+        data.images.map((img: string) => `data:image/png;base64,${img}`)
+      );
+    } catch (err) {
+      alert("Preview error ❌ (check backend)");
+      console.error(err);
     }
   };
 

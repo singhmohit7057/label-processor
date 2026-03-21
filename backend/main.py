@@ -10,10 +10,8 @@ app = FastAPI()
 # ✅ FIXED CORS (production safe)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://label-processor.vercel.app",
-        "http://localhost:5173"
-    ],
+    allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -72,38 +70,28 @@ async def process(
 # PREVIEW
 # =========================
 @app.post("/preview")
-async def preview(
-    file: UploadFile = File(...),
-    size: str = Form(...),
-    output: str = Form(...)
-):
+async def preview(file: UploadFile = File(...), size: str = Form(...), output: str = Form(...)):
     try:
-        pdf_bytes = await file.read()
-        pages = pdf_to_images(pdf_bytes)
+        contents = await file.read()
+
+        doc = fitz.open(stream=contents, filetype="pdf")
 
         images = []
 
-        for page in pages[:2]:
-            s, inv = process_page(page, size)
+        for page in doc:
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            img_bytes = pix.tobytes("png")
 
-            buf = io.BytesIO()
+            import base64
+            images.append(base64.b64encode(img_bytes).decode())
 
-            if output == "combined":
-                from PIL import Image
-                combined = Image.new("RGB", (s.width, s.height + inv.height), "white")
-                combined.paste(s, (0, 0))
-                combined.paste(inv, (0, s.height))
-                combined.save(buf, "PNG")
-            else:
-                s.save(buf, "PNG")
-
-            images.append(base64.b64encode(buf.getvalue()).decode())
+            if len(images) >= 2:
+                break
 
         return {"images": images}
 
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
+        return {"error": str(e)}
 
 @app.get("/")
 def home():
