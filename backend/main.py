@@ -1,88 +1,156 @@
 from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
-import io
-import zipfile
-import fitz  # PyMuPDF
+import io, zipfile, base64
+import fitz
 
 app = FastAPI()
 
+# ✅ CORS (important for frontend)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 DPI = 300
 
-@app.post("/process")
-async def process_pdf(
-    file: UploadFile = File(...),
-    size: str = Form(...),        # 3x5 or 4x6
-    output: str = Form(...),      # separate or combined
-):
-    pdf_bytes = await file.read()
 
-    # =========================
-    # 🔁 LOAD PDF WITH PYMUPDF
-    # =========================
+def process_images(pages, size):
+    SHIPPING_SIZE = (3 * DPI, 5 * DPI) if size == "3x5" else (4 * DPI, 6 * DPI)
+    INVOICE_SIZE = (4 * DPI, 6 * DPI)
+
+    results = []
+
+    for img in pages:
+        w, h = img.size
+
+        # SHIPPING
+        shipping = img.crop((0, int(h * 0.02), w, int(h * 0.462)))
+        shipping = shipping.resize(SHIPPING_SIZE).convert("RGB")
+
+        # INVOICE
+        rotated = img.rotate(90, expand=True)
+        rw, rh = rotated.size
+
+        invoice = rotated.crop((
+            int(rw * 0.385),
+            int(rh * 0.07),
+            int(rw * 0.95),
+            int(rh * 0.92)
+        ))
+        invoice = invoice.resize(INVOICE_SIZE).convert("RGB")
+
+        results.append((shipping, invoice))
+
+    return results
+
+
+def pdf_to_images(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
     pages = []
+
     for page in doc:
-        pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))  # simulate DPI
+        pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         pages.append(img)
 
-    SHIPPING_SIZE = (3 * DPI, 5 * DPI) if size == "3x5" else (4 * DPI, 6 * DPI)
-    INVOICE_4x6 = (4 * DPI, 6 * DPI)
+    return pages
 
-    zip_buffer = io.BytesIO()
 
-    with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        for i, img in enumerate(pages, start=1):
-            w, h = img.size
+# =========================
+# 📦 PROCESS (DOWNLOAD)
+# =========================
+@app.post("/process")
+async def process_pdf(
+    file: UploadFile = File(...),
+    size: str = Form(...),
+    output: str = Form(...),
+    zip_enabled: str = Form("1")
+):
+    pdf_bytes = await file.read()
+    pages = pdf_to_images(pdf_bytes)
+    processed = process_images(pages, size)
 
-            # =========================
-            # 📦 SHIPPING
-            # =========================
-            shipping = img.crop((0, int(h*0.02), w, int(h*0.462)))
-            shipping = shipping.resize(SHIPPING_SIZE).convert("RGB")
+    zip_flag = True if zip_enabled == "1" else False
 
-            # =========================
-            # 🧾 INVOICE
-            # =========================
-            rotated = img.rotate(90, expand=True)
-            rw, rh = rotated.size
+    if zip_flag:
+        zip_buffer = io.BytesIO()
 
-            invoice = rotated.crop((
-                int(rw*0.385),
-                int(rh*0.07),
-                int(rw*0.95),
-                int(rh*0.92)
-            ))
-            invoice = invoice.resize(INVOICE_4x6).convert("RGB")
+        with zipfile.ZipFile(zip_buffer, "w") as zipf:
+            for i, (shipping, invoice) in enumerate(processed, 1):
 
-            # =========================
-            # 💾 SAVE
-            # =========================
-            if output == "separate":
-                s_buf, i_buf = io.BytesIO(), io.BytesIO()
+                if output == "separate":
+                    s_buf, i_buf = io.BytesIO(), io.BytesIO()
+                    shipping.save(s_buf, "PDF")
+                    invoice.save(i_buf, "PDF")
 
-                shipping.save(s_buf, "PDF")
-                invoice.save(i_buf, "PDF")
+                    zipf.writestr(f"page{i}_shipping.pdf", s_buf.getvalue())
+                    zipf.writestr(f"page{i}_invoice.pdf", i_buf.getvalue())
 
-                zipf.writestr(f"page{i}_shipping.pdf", s_buf.getvalue())
-                zipf.writestr(f"page{i}_invoice.pdf", i_buf.getvalue())
+                else:
+                    c_buf = io.BytesIO()
+                    shipping.save(
+                        c_buf,
+                        "PDF",
+                        save_all=True,
+                        append_images=[invoice]
+                    )
+                    zipf.writestr(f"page{i}_combined.pdf", c_buf.getvalue())
 
-            else:
-                c_buf = io.BytesIO()
-                shipping.save(
-                    c_buf,
-                    "PDF",
-                    save_all=True,
-                    append_images=[invoice]
-                )
-                zipf.writestr(f"page{i}_combined.pdf", c_buf.getvalue())
+        zip_buffer.seek(0)
 
-    zip_buffer.seek(0)
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=output.zip"}
+        )
 
-    return StreamingResponse(
-        zip_buffer,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=output.zip"}
-    )
+    else:
+        # return first combined PDF
+        shipping, invoice = processed[0]
+
+        buffer = io.BytesIO()
+        shipping.save(buffer, "PDF", save_all=True, append_images=[invoice])
+        buffer.seek(0)
+
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=output.pdf"}
+        )
+
+
+# =========================
+# 👀 PREVIEW ENDPOINT
+# =========================
+@app.post("/preview")
+async def preview_pdf(
+    file: UploadFile = File(...),
+    size: str = Form(...),
+    output: str = Form(...)
+):
+    pdf_bytes = await file.read()
+    pages = pdf_to_images(pdf_bytes)
+    processed = process_images(pages, size)
+
+    previews = []
+
+    for shipping, invoice in processed[:2]:
+        buf = io.BytesIO()
+
+        if output == "combined":
+            shipping.save(buf, "PNG")
+        else:
+            shipping.save(buf, "PNG")
+
+        previews.append(base64.b64encode(buf.getvalue()).decode())
+
+    return JSONResponse({"images": previews})
+
+
+@app.get("/")
+def home():
+    return {"status": "API running 🚀"}
