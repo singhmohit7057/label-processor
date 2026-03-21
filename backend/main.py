@@ -80,8 +80,8 @@ async def process(
 @app.post("/preview")
 async def preview(
     file: UploadFile = File(...),
-    size: str = Form(...),
-    output: str = Form(...)
+    size: str = Form("4*6"),
+    output: str = Form("separate")
 ):
     try:
         pdf_bytes = await file.read()
