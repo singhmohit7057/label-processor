@@ -18,48 +18,51 @@ app.add_middleware(
 DPI = 300
 
 
+# =========================
+# PDF → IMAGES
+# =========================
 def pdf_to_images(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = []
 
     for page in doc:
-        pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
+        pix = page.get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72))
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         pages.append(img)
 
     return pages
 
 
-def process_images(pages, size):
+# =========================
+# PROCESS SINGLE PAGE
+# =========================
+def process_page(img, size):
     SHIPPING_SIZE = (3 * DPI, 5 * DPI) if size == "3x5" else (4 * DPI, 6 * DPI)
     INVOICE_SIZE = (4 * DPI, 6 * DPI)
 
-    results = []
+    w, h = img.size
 
-    for img in pages:
-        w, h = img.size
+    # SHIPPING
+    shipping = img.crop((0, int(h * 0.02), w, int(h * 0.462)))
+    shipping = shipping.resize(SHIPPING_SIZE).convert("RGB")
 
-        shipping = img.crop((0, int(h * 0.02), w, int(h * 0.462)))
-        shipping = shipping.resize(SHIPPING_SIZE).convert("RGB")
+    # INVOICE
+    rotated = img.rotate(90, expand=True)
+    rw, rh = rotated.size
 
-        rotated = img.rotate(90, expand=True)
-        rw, rh = rotated.size
+    invoice = rotated.crop((
+        int(rw * 0.385),
+        int(rh * 0.07),
+        int(rw * 0.95),
+        int(rh * 0.92)
+    ))
+    invoice = invoice.resize(INVOICE_SIZE).convert("RGB")
 
-        invoice = rotated.crop((
-            int(rw * 0.385),
-            int(rh * 0.07),
-            int(rw * 0.95),
-            int(rh * 0.92)
-        ))
-        invoice = invoice.resize(INVOICE_SIZE).convert("RGB")
-
-        results.append((shipping, invoice))
-
-    return results
+    return shipping, invoice
 
 
 # =========================
-# 🚀 PROCESS
+# PROCESS ENDPOINT
 # =========================
 @app.post("/process")
 async def process_pdf(
@@ -70,35 +73,39 @@ async def process_pdf(
 ):
     pdf_bytes = await file.read()
     pages = pdf_to_images(pdf_bytes)
-    processed = process_images(pages, size)
 
     zip_flag = zip_enabled == "1"
 
+    # ================= ZIP OUTPUT =================
     if zip_flag:
         zip_buffer = io.BytesIO()
 
         with zipfile.ZipFile(zip_buffer, "w") as zipf:
-            for i, (shipping, invoice) in enumerate(processed, 1):
+            for i, page in enumerate(pages, 1):
+                shipping, invoice = process_page(page, size)
 
                 if output == "separate":
                     s_buf, i_buf = io.BytesIO(), io.BytesIO()
-                    shipping.save(s_buf, "PDF")
-                    invoice.save(i_buf, "PDF")
+
+                    shipping.save(s_buf, format="PDF")
+                    invoice.save(i_buf, format="PDF")
 
                     zipf.writestr(f"page{i}_shipping.pdf", s_buf.getvalue())
                     zipf.writestr(f"page{i}_invoice.pdf", i_buf.getvalue())
 
                 else:
                     c_buf = io.BytesIO()
+
                     shipping.save(
                         c_buf,
-                        "PDF",
+                        format="PDF",
                         save_all=True,
                         append_images=[invoice]
                     )
+
                     zipf.writestr(f"page{i}_combined.pdf", c_buf.getvalue())
 
-        zip_buffer.seek(0)  # 🔥 FIX
+        zip_buffer.seek(0)
 
         return StreamingResponse(
             zip_buffer,
@@ -106,13 +113,24 @@ async def process_pdf(
             headers={"Content-Disposition": "attachment; filename=output.zip"}
         )
 
+    # ================= SINGLE PDF =================
     else:
-        shipping, invoice = processed[0]
+        shipping, invoice = process_page(pages[0], size)
 
         buffer = io.BytesIO()
-        shipping.save(buffer, "PDF", save_all=True, append_images=[invoice])
 
-        buffer.seek(0)  # 🔥 FIX
+        shipping.save(
+            buffer,
+            format="PDF",
+            save_all=True,
+            append_images=[invoice]
+        )
+
+        buffer.seek(0)
+
+        # 🔥 safety check
+        if buffer.getbuffer().nbytes < 100:
+            return JSONResponse({"error": "PDF generation failed"}, status_code=500)
 
         return StreamingResponse(
             buffer,
@@ -122,7 +140,7 @@ async def process_pdf(
 
 
 # =========================
-# 👀 PREVIEW
+# PREVIEW ENDPOINT
 # =========================
 @app.post("/preview")
 async def preview_pdf(
@@ -132,17 +150,27 @@ async def preview_pdf(
 ):
     pdf_bytes = await file.read()
     pages = pdf_to_images(pdf_bytes)
-    processed = process_images(pages, size)
 
     previews = []
 
-    for shipping, invoice in processed[:2]:
-        buf = io.BytesIO()
+    for page in pages[:2]:
+        shipping, invoice = process_page(page, size)
 
         if output == "combined":
-            shipping.save(buf, "PNG")
+            combined = Image.new(
+                "RGB",
+                (shipping.width, shipping.height + invoice.height),
+                "white"
+            )
+            combined.paste(shipping, (0, 0))
+            combined.paste(invoice, (0, shipping.height))
+
+            buf = io.BytesIO()
+            combined.save(buf, format="PNG")
+
         else:
-            shipping.save(buf, "PNG")
+            buf = io.BytesIO()
+            shipping.save(buf, format="PNG")
 
         previews.append(base64.b64encode(buf.getvalue()).decode())
 

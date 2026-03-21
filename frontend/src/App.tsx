@@ -19,7 +19,7 @@ function App() {
 
   const API_URL = import.meta.env.VITE_API_URL;
 
-  // ORIGINAL PREVIEW
+  // ================= ORIGINAL PREVIEW =================
   const generatePreview = async (file: File) => {
     const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
 
@@ -43,7 +43,7 @@ function App() {
     setPreviewUrls(urls);
   };
 
-  // PROCESSED PREVIEW
+  // ================= PROCESSED PREVIEW =================
   const fetchPreview = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -72,7 +72,7 @@ function App() {
     if (file) fetchPreview(file);
   }, [size, output]);
 
-  // UPLOAD
+  // ================= UPLOAD =================
   const upload = () => {
     if (!file) return alert("Upload file");
 
@@ -87,6 +87,7 @@ function App() {
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_URL}/process`);
+    xhr.responseType = "blob";
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
@@ -95,7 +96,20 @@ function App() {
     };
 
     xhr.onload = () => {
-      const blob = xhr.response; // 🔥 FIX
+      if (xhr.status !== 200) {
+        alert("Error processing file");
+        setLoading(false);
+        return;
+      }
+
+      const blob = xhr.response;
+
+      if (!blob || blob.size < 100) {
+        alert("Invalid file ❌");
+        setLoading(false);
+        return;
+      }
+
       const url = window.URL.createObjectURL(blob);
 
       const a = document.createElement("a");
@@ -106,7 +120,11 @@ function App() {
       setLoading(false);
     };
 
-    xhr.responseType = "blob";
+    xhr.onerror = () => {
+      alert("Network error");
+      setLoading(false);
+    };
+
     xhr.send(formData);
   };
 
@@ -120,72 +138,35 @@ function App() {
         onChange={(e) => e.target.files && handleFile(e.target.files[0])}
       />
 
-      {/* OPTIONS */}
       <div className="options">
         <div className="toggle">
-          <button
-            className={size === "3x5" ? "active" : ""}
-            onClick={() => setSize("3x5")}
-          >
-            3x5
-          </button>
-          <button
-            className={size === "4x6" ? "active" : ""}
-            onClick={() => setSize("4x6")}
-          >
-            4x6
-          </button>
+          <button className={size === "3x5" ? "active" : ""} onClick={() => setSize("3x5")}>3x5</button>
+          <button className={size === "4x6" ? "active" : ""} onClick={() => setSize("4x6")}>4x6</button>
         </div>
 
         <div className="toggle">
-          <button
-            className={output === "separate" ? "active" : ""}
-            onClick={() => setOutput("separate")}
-          >
-            Separate
-          </button>
-          <button
-            className={output === "combined" ? "active" : ""}
-            onClick={() => setOutput("combined")}
-          >
-            Combined
-          </button>
+          <button className={output === "separate" ? "active" : ""} onClick={() => setOutput("separate")}>Separate</button>
+          <button className={output === "combined" ? "active" : ""} onClick={() => setOutput("combined")}>Combined</button>
         </div>
 
         <div className="toggle">
-          <button
-            className={zip ? "active" : ""}
-            onClick={() => setZip(true)}
-          >
-            ZIP
-          </button>
-          <button
-            className={!zip ? "active" : ""}
-            onClick={() => setZip(false)}
-          >
-            PDF
-          </button>
+          <button className={zip ? "active" : ""} onClick={() => setZip(true)}>ZIP</button>
+          <button className={!zip ? "active" : ""} onClick={() => setZip(false)}>PDF</button>
         </div>
       </div>
 
-      {/* PREVIEW */}
       <div className="preview-container">
         <div className="preview-box">
           <h3>Original</h3>
-          {previewUrls.map((url, i) => (
-            <img key={i} src={url} />
-          ))}
+          {previewUrls.map((url, i) => <img key={i} src={url} />)}
         </div>
 
         <div className="preview-box">
           <h3>Processed</h3>
-          {processedPreview.map((url, i) => (
-            <img key={i} src={url} />
-          ))}
+          {processedPreview.map((url, i) => <img key={i} src={url} />)}
         </div>
       </div>
 
-      {/* PROGRESS */}
       {loading && (
         <div className="progress">
           <div style={{ width: `${progress}%` }} />
