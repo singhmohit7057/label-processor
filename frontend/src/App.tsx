@@ -6,7 +6,10 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 function App() {
+  const API_URL = import.meta.env.VITE_API_URL;
+
   const [file, setFile] = useState<File | null>(null);
+
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [processedPreview, setProcessedPreview] = useState<string[]>([]);
 
@@ -15,53 +18,71 @@ function App() {
   const [zip, setZip] = useState(true);
 
   const [loading, setLoading] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [progress, setProgress] = useState(0);
-
-  const API_URL = import.meta.env.VITE_API_URL;
 
   // ================= ORIGINAL PREVIEW =================
   const generatePreview = async (file: File) => {
-    const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
+    try {
+      const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
 
-    const urls: string[] = [];
+      const urls: string[] = [];
 
-    for (let i = 1; i <= Math.min(2, pdf.numPages); i++) {
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 1 });
+      for (let i = 1; i <= Math.min(2, pdf.numPages); i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1 });
 
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d")!;
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d")!;
 
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
 
-      await page.render({ canvasContext: context, viewport, canvas }).promise;
+        await page.render({ canvasContext: context, viewport, canvas }).promise;
 
-      urls.push(canvas.toDataURL());
+        urls.push(canvas.toDataURL());
+      }
+
+      setPreviewUrls(urls);
+    } catch {
+      alert("Preview failed ❌");
     }
-
-    setPreviewUrls(urls);
   };
 
   // ================= PROCESSED PREVIEW =================
   const fetchPreview = async (file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("size", size);
-    formData.append("output", output);
+    try {
+      setPreviewLoading(true);
 
-    const res = await fetch(`${API_URL}/preview`, {
-      method: "POST",
-      body: formData,
-    });
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("size", size);
+      formData.append("output", output);
 
-    const data = await res.json();
+      const res = await fetch(`${API_URL}/preview`, {
+        method: "POST",
+        body: formData,
+      });
 
-    setProcessedPreview(
-      data.images.map((img: string) => `data:image/png;base64,${img}`)
-    );
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text);
+      }
+
+      const data = await res.json();
+
+      setProcessedPreview(
+        data.images.map((img: string) => `data:image/png;base64,${img}`)
+      );
+    } catch (err) {
+      console.error(err);
+      alert("Preview error ❌ (check backend)");
+    } finally {
+      setPreviewLoading(false);
+    }
   };
 
+  // ================= FILE HANDLER =================
   const handleFile = (f: File) => {
     setFile(f);
     generatePreview(f);
@@ -72,9 +93,9 @@ function App() {
     if (file) fetchPreview(file);
   }, [size, output]);
 
-  // ================= UPLOAD =================
+  // ================= PROCESS =================
   const upload = () => {
-    if (!file) return alert("Upload file");
+    if (!file) return alert("Upload file first");
 
     setLoading(true);
     setProgress(0);
@@ -98,8 +119,7 @@ function App() {
     xhr.onload = async () => {
       if (xhr.status !== 200) {
         const text = await xhr.response.text();
-        console.error("Backend error:", text);
-        alert("Backend error: " + text);
+        alert("Backend error ❌\n" + text);
         setLoading(false);
         return;
       }
@@ -107,7 +127,7 @@ function App() {
       const blob = xhr.response;
 
       if (!blob || blob.size < 100) {
-        alert("Invalid file ❌");
+        alert("Invalid output ❌");
         setLoading(false);
         return;
       }
@@ -123,7 +143,7 @@ function App() {
     };
 
     xhr.onerror = () => {
-      alert("Network error");
+      alert("Network error ❌ (check CORS/backend)");
       setLoading(false);
     };
 
@@ -134,12 +154,16 @@ function App() {
     <div className="container">
       <h1>📦 Label Processor</h1>
 
+      {/* FILE */}
       <input
         type="file"
         accept="application/pdf"
-        onChange={(e) => e.target.files && handleFile(e.target.files[0])}
+        onChange={(e) =>
+          e.target.files && handleFile(e.target.files[0])
+        }
       />
 
+      {/* OPTIONS */}
       <div className="options">
         <div className="toggle">
           <button className={size === "3x5" ? "active" : ""} onClick={() => setSize("3x5")}>3x5</button>
@@ -157,26 +181,37 @@ function App() {
         </div>
       </div>
 
+      {/* PREVIEW */}
       <div className="preview-container">
         <div className="preview-box">
           <h3>Original</h3>
-          {previewUrls.map((url, i) => <img key={i} src={url} />)}
+          {previewUrls.map((url, i) => (
+            <img key={i} src={url} />
+          ))}
         </div>
 
         <div className="preview-box">
           <h3>Processed</h3>
-          {processedPreview.map((url, i) => <img key={i} src={url} />)}
+          {previewLoading ? (
+            <p>Loading preview...</p>
+          ) : (
+            processedPreview.map((url, i) => (
+              <img key={i} src={url} />
+            ))
+          )}
         </div>
       </div>
 
+      {/* PROGRESS */}
       {loading && (
         <div className="progress">
           <div style={{ width: `${progress}%` }} />
         </div>
       )}
 
+      {/* BUTTON */}
       <button onClick={upload}>
-        {loading ? `${progress}%` : "🚀 Process"}
+        {loading ? `${progress}% Processing...` : "🚀 Process"}
       </button>
     </div>
   );
