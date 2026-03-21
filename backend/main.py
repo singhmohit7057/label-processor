@@ -1,9 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from pdf2image import convert_from_bytes
 from PIL import Image
 import io
 import zipfile
+import fitz  # PyMuPDF
 
 app = FastAPI()
 
@@ -16,7 +16,17 @@ async def process_pdf(
     output: str = Form(...),      # separate or combined
 ):
     pdf_bytes = await file.read()
-    pages = convert_from_bytes(pdf_bytes, dpi=DPI)
+
+    # =========================
+    # 🔁 LOAD PDF WITH PYMUPDF
+    # =========================
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    pages = []
+    for page in doc:
+        pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))  # simulate DPI
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        pages.append(img)
 
     SHIPPING_SIZE = (3 * DPI, 5 * DPI) if size == "3x5" else (4 * DPI, 6 * DPI)
     INVOICE_4x6 = (4 * DPI, 6 * DPI)
@@ -27,11 +37,15 @@ async def process_pdf(
         for i, img in enumerate(pages, start=1):
             w, h = img.size
 
-            # SHIPPING
+            # =========================
+            # 📦 SHIPPING
+            # =========================
             shipping = img.crop((0, int(h*0.02), w, int(h*0.462)))
             shipping = shipping.resize(SHIPPING_SIZE).convert("RGB")
 
-            # INVOICE
+            # =========================
+            # 🧾 INVOICE
+            # =========================
             rotated = img.rotate(90, expand=True)
             rw, rh = rotated.size
 
@@ -43,6 +57,9 @@ async def process_pdf(
             ))
             invoice = invoice.resize(INVOICE_4x6).convert("RGB")
 
+            # =========================
+            # 💾 SAVE
+            # =========================
             if output == "separate":
                 s_buf, i_buf = io.BytesIO(), io.BytesIO()
 

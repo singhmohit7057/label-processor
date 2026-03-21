@@ -1,5 +1,5 @@
 fastapi
 uvicorn
-pdf2image
+pymupdf
 pillow
 python-multipart
