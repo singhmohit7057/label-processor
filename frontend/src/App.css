@@ -111,3 +111,40 @@ button:disabled {
   color: white;
   border: none;
 }
+
+.toggle button {
+  padding: 8px 16px;
+  border-radius: 12px;
+  border: 1px solid #444;
+  background: #111;
+  color: #aaa;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.toggle button.active {
+  background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+  color: #fff;
+  border: none;
+}
+
+
+.preview-container {
+  display: flex;
+  gap: 30px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.preview-box {
+  background: #111;
+  padding: 16px;
+  border-radius: 16px;
+  width: 320px;
+  text-align: center;
+}
+
+.preview-box img {
+  width: 100%;
+  border-radius: 10px;
+}

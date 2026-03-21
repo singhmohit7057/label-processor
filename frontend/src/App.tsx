@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
@@ -19,9 +19,7 @@ function App() {
 
   const API_URL = import.meta.env.VITE_API_URL;
 
-  // =========================
-  // 📄 ORIGINAL PREVIEW
-  // =========================
+  // ORIGINAL PREVIEW
   const generatePreview = async (file: File) => {
     const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
 
@@ -45,9 +43,7 @@ function App() {
     setPreviewUrls(urls);
   };
 
-  // =========================
-  // 👀 PROCESSED PREVIEW
-  // =========================
+  // PROCESSED PREVIEW
   const fetchPreview = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -72,9 +68,11 @@ function App() {
     fetchPreview(f);
   };
 
-  // =========================
-  // 🚀 UPLOAD
-  // =========================
+  useEffect(() => {
+    if (file) fetchPreview(file);
+  }, [size, output]);
+
+  // UPLOAD
   const upload = () => {
     if (!file) return alert("Upload file");
 
@@ -97,7 +95,7 @@ function App() {
     };
 
     xhr.onload = () => {
-      const blob = new Blob([xhr.response]);
+      const blob = xhr.response; // 🔥 FIX
       const url = window.URL.createObjectURL(blob);
 
       const a = document.createElement("a");
@@ -116,7 +114,6 @@ function App() {
     <div className="container">
       <h1>📦 Label Processor</h1>
 
-      {/* UPLOAD */}
       <input
         type="file"
         accept="application/pdf"
@@ -126,31 +123,61 @@ function App() {
       {/* OPTIONS */}
       <div className="options">
         <div className="toggle">
-          <button onClick={() => setSize("3x5")}>3x5</button>
-          <button onClick={() => setSize("4x6")}>4x6</button>
+          <button
+            className={size === "3x5" ? "active" : ""}
+            onClick={() => setSize("3x5")}
+          >
+            3x5
+          </button>
+          <button
+            className={size === "4x6" ? "active" : ""}
+            onClick={() => setSize("4x6")}
+          >
+            4x6
+          </button>
         </div>
 
         <div className="toggle">
-          <button onClick={() => setOutput("separate")}>Separate</button>
-          <button onClick={() => setOutput("combined")}>Combined</button>
+          <button
+            className={output === "separate" ? "active" : ""}
+            onClick={() => setOutput("separate")}
+          >
+            Separate
+          </button>
+          <button
+            className={output === "combined" ? "active" : ""}
+            onClick={() => setOutput("combined")}
+          >
+            Combined
+          </button>
         </div>
 
         <div className="toggle">
-          <button onClick={() => setZip(true)}>ZIP</button>
-          <button onClick={() => setZip(false)}>PDF</button>
+          <button
+            className={zip ? "active" : ""}
+            onClick={() => setZip(true)}
+          >
+            ZIP
+          </button>
+          <button
+            className={!zip ? "active" : ""}
+            onClick={() => setZip(false)}
+          >
+            PDF
+          </button>
         </div>
       </div>
 
       {/* PREVIEW */}
       <div className="preview-container">
-        <div>
+        <div className="preview-box">
           <h3>Original</h3>
           {previewUrls.map((url, i) => (
             <img key={i} src={url} />
           ))}
         </div>
 
-        <div>
+        <div className="preview-box">
           <h3>Processed</h3>
           {processedPreview.map((url, i) => (
             <img key={i} src={url} />

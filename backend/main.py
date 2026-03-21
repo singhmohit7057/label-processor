@@ -7,7 +7,7 @@ import fitz
 
 app = FastAPI()
 
-# ✅ CORS (important for frontend)
+# ✅ CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,6 +16,18 @@ app.add_middleware(
 )
 
 DPI = 300
+
+
+def pdf_to_images(pdf_bytes):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages = []
+
+    for page in doc:
+        pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        pages.append(img)
+
+    return pages
 
 
 def process_images(pages, size):
@@ -27,11 +39,9 @@ def process_images(pages, size):
     for img in pages:
         w, h = img.size
 
-        # SHIPPING
         shipping = img.crop((0, int(h * 0.02), w, int(h * 0.462)))
         shipping = shipping.resize(SHIPPING_SIZE).convert("RGB")
 
-        # INVOICE
         rotated = img.rotate(90, expand=True)
         rw, rh = rotated.size
 
@@ -48,20 +58,8 @@ def process_images(pages, size):
     return results
 
 
-def pdf_to_images(pdf_bytes):
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages = []
-
-    for page in doc:
-        pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        pages.append(img)
-
-    return pages
-
-
 # =========================
-# 📦 PROCESS (DOWNLOAD)
+# 🚀 PROCESS
 # =========================
 @app.post("/process")
 async def process_pdf(
@@ -74,7 +72,7 @@ async def process_pdf(
     pages = pdf_to_images(pdf_bytes)
     processed = process_images(pages, size)
 
-    zip_flag = True if zip_enabled == "1" else False
+    zip_flag = zip_enabled == "1"
 
     if zip_flag:
         zip_buffer = io.BytesIO()
@@ -100,7 +98,7 @@ async def process_pdf(
                     )
                     zipf.writestr(f"page{i}_combined.pdf", c_buf.getvalue())
 
-        zip_buffer.seek(0)
+        zip_buffer.seek(0)  # 🔥 FIX
 
         return StreamingResponse(
             zip_buffer,
@@ -109,12 +107,12 @@ async def process_pdf(
         )
 
     else:
-        # return first combined PDF
         shipping, invoice = processed[0]
 
         buffer = io.BytesIO()
         shipping.save(buffer, "PDF", save_all=True, append_images=[invoice])
-        buffer.seek(0)
+
+        buffer.seek(0)  # 🔥 FIX
 
         return StreamingResponse(
             buffer,
@@ -124,7 +122,7 @@ async def process_pdf(
 
 
 # =========================
-# 👀 PREVIEW ENDPOINT
+# 👀 PREVIEW
 # =========================
 @app.post("/preview")
 async def preview_pdf(
