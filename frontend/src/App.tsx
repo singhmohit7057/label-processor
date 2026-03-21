@@ -95,9 +95,11 @@ function App() {
       }
     };
 
-    xhr.onload = () => {
+    xhr.onload = async () => {
       if (xhr.status !== 200) {
-        alert("Error processing file");
+        const text = await xhr.response.text();
+        console.error("Backend error:", text);
+        alert("Backend error: " + text);
         setLoading(false);
         return;
       }

@@ -19,26 +19,29 @@ DPI = 300
 
 
 # =========================
-# PDF → IMAGES
+# PDF → IMAGES (SAFE)
 # =========================
 def pdf_to_images(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = []
 
     for page in doc:
-        pix = page.get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72))
+        pix = page.get_pixmap()  # 🔥 SAFE (no matrix crash)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         pages.append(img)
+
+    if not pages:
+        raise Exception("No pages extracted from PDF")
 
     return pages
 
 
 # =========================
-# PROCESS SINGLE PAGE
+# PROCESS PAGE
 # =========================
 def process_page(img, size):
-    SHIPPING_SIZE = (3 * DPI, 5 * DPI) if size == "3x5" else (4 * DPI, 6 * DPI)
-    INVOICE_SIZE = (4 * DPI, 6 * DPI)
+    SHIPPING_SIZE = (900, 1500) if size == "3x5" else (1200, 1800)
+    INVOICE_SIZE = (1200, 1800)
 
     w, h = img.size
 
@@ -71,72 +74,75 @@ async def process_pdf(
     output: str = Form(...),
     zip_enabled: str = Form("1")
 ):
-    pdf_bytes = await file.read()
-    pages = pdf_to_images(pdf_bytes)
+    try:
+        pdf_bytes = await file.read()
 
-    zip_flag = zip_enabled == "1"
+        if not pdf_bytes:
+            raise Exception("Empty file received")
 
-    # ================= ZIP OUTPUT =================
-    if zip_flag:
-        zip_buffer = io.BytesIO()
+        pages = pdf_to_images(pdf_bytes)
+        zip_flag = zip_enabled == "1"
 
-        with zipfile.ZipFile(zip_buffer, "w") as zipf:
-            for i, page in enumerate(pages, 1):
-                shipping, invoice = process_page(page, size)
+        # ================= ZIP =================
+        if zip_flag:
+            zip_buffer = io.BytesIO()
 
-                if output == "separate":
-                    s_buf, i_buf = io.BytesIO(), io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                for i, page in enumerate(pages, 1):
+                    shipping, invoice = process_page(page, size)
 
-                    shipping.save(s_buf, format="PDF")
-                    invoice.save(i_buf, format="PDF")
+                    if output == "separate":
+                        s_buf, i_buf = io.BytesIO(), io.BytesIO()
+                        shipping.save(s_buf, format="PDF")
+                        invoice.save(i_buf, format="PDF")
 
-                    zipf.writestr(f"page{i}_shipping.pdf", s_buf.getvalue())
-                    zipf.writestr(f"page{i}_invoice.pdf", i_buf.getvalue())
+                        zipf.writestr(f"page{i}_shipping.pdf", s_buf.getvalue())
+                        zipf.writestr(f"page{i}_invoice.pdf", i_buf.getvalue())
 
-                else:
-                    c_buf = io.BytesIO()
+                    else:
+                        c_buf = io.BytesIO()
+                        shipping.save(
+                            c_buf,
+                            format="PDF",
+                            save_all=True,
+                            append_images=[invoice]
+                        )
+                        zipf.writestr(f"page{i}_combined.pdf", c_buf.getvalue())
 
-                    shipping.save(
-                        c_buf,
-                        format="PDF",
-                        save_all=True,
-                        append_images=[invoice]
-                    )
+            zip_buffer.seek(0)
 
-                    zipf.writestr(f"page{i}_combined.pdf", c_buf.getvalue())
+            return StreamingResponse(
+                zip_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": "attachment; filename=output.zip"}
+            )
 
-        zip_buffer.seek(0)
+        # ================= PDF =================
+        else:
+            shipping, invoice = process_page(pages[0], size)
 
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={"Content-Disposition": "attachment; filename=output.zip"}
-        )
+            buffer = io.BytesIO()
 
-    # ================= SINGLE PDF =================
-    else:
-        shipping, invoice = process_page(pages[0], size)
+            shipping.save(
+                buffer,
+                format="PDF",
+                save_all=True,
+                append_images=[invoice]
+            )
 
-        buffer = io.BytesIO()
+            buffer.seek(0)
 
-        shipping.save(
-            buffer,
-            format="PDF",
-            save_all=True,
-            append_images=[invoice]
-        )
+            if buffer.getbuffer().nbytes < 100:
+                raise Exception("Generated PDF is invalid")
 
-        buffer.seek(0)
+            return StreamingResponse(
+                buffer,
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=output.pdf"}
+            )
 
-        # 🔥 safety check
-        if buffer.getbuffer().nbytes < 100:
-            return JSONResponse({"error": "PDF generation failed"}, status_code=500)
-
-        return StreamingResponse(
-            buffer,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=output.pdf"}
-        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # =========================
@@ -148,33 +154,37 @@ async def preview_pdf(
     size: str = Form(...),
     output: str = Form(...)
 ):
-    pdf_bytes = await file.read()
-    pages = pdf_to_images(pdf_bytes)
+    try:
+        pdf_bytes = await file.read()
+        pages = pdf_to_images(pdf_bytes)
 
-    previews = []
+        previews = []
 
-    for page in pages[:2]:
-        shipping, invoice = process_page(page, size)
+        for page in pages[:2]:
+            shipping, invoice = process_page(page, size)
 
-        if output == "combined":
-            combined = Image.new(
-                "RGB",
-                (shipping.width, shipping.height + invoice.height),
-                "white"
-            )
-            combined.paste(shipping, (0, 0))
-            combined.paste(invoice, (0, shipping.height))
+            if output == "combined":
+                combined = Image.new(
+                    "RGB",
+                    (shipping.width, shipping.height + invoice.height),
+                    "white"
+                )
+                combined.paste(shipping, (0, 0))
+                combined.paste(invoice, (0, shipping.height))
 
-            buf = io.BytesIO()
-            combined.save(buf, format="PNG")
+                buf = io.BytesIO()
+                combined.save(buf, format="PNG")
 
-        else:
-            buf = io.BytesIO()
-            shipping.save(buf, format="PNG")
+            else:
+                buf = io.BytesIO()
+                shipping.save(buf, format="PNG")
 
-        previews.append(base64.b64encode(buf.getvalue()).decode())
+            previews.append(base64.b64encode(buf.getvalue()).decode())
 
-    return JSONResponse({"images": previews})
+        return JSONResponse({"images": previews})
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/")
