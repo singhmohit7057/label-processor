@@ -91,3 +91,23 @@ button:disabled {
   background: #22c55e;
   transition: width 0.2s;
 }
+
+.toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.toggle button {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid #444;
+  background: #111;
+  color: #ccc;
+  cursor: pointer;
+}
+
+.toggle button.active {
+  background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+  color: white;
+  border: none;
+}

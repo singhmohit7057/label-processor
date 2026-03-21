@@ -1,6 +1,5 @@
 import { useState } from "react";
 import "./App.css";
-
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
 
@@ -8,53 +7,76 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 function App() {
   const [file, setFile] = useState<File | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [processedPreview, setProcessedPreview] = useState<string[]>([]);
 
   const [size, setSize] = useState("4x6");
   const [output, setOutput] = useState("separate");
+  const [zip, setZip] = useState(true);
 
-  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   const API_URL = import.meta.env.VITE_API_URL;
 
   // =========================
-  // 📄 PDF PREVIEW
+  // 📄 ORIGINAL PREVIEW
   // =========================
   const generatePreview = async (file: File) => {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const pdf = await pdfjsLib.getDocument(await file.arrayBuffer()).promise;
 
-  const urls: string[] = [];
+    const urls: string[] = [];
 
-  for (let i = 1; i <= Math.min(pdf.numPages, 2); i++) {
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1 });
+    for (let i = 1; i <= Math.min(2, pdf.numPages); i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1 });
 
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d")!;
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d")!;
 
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
 
-    await page.render({
-      canvasContext: context,
-      viewport,
-      canvas: canvas,
-    }).promise;
+      await page.render({ canvasContext: context, viewport, canvas }).promise;
 
-    urls.push(canvas.toDataURL());
-  }
+      urls.push(canvas.toDataURL());
+    }
 
-  setPreviewUrls(urls);
-};
+    setPreviewUrls(urls);
+  };
 
   // =========================
-  // 📤 UPLOAD WITH PROGRESS
+  // 👀 PROCESSED PREVIEW
   // =========================
-  const upload = async () => {
-    if (!file) return alert("Upload a PDF first");
+  const fetchPreview = async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("size", size);
+    formData.append("output", output);
+
+    const res = await fetch(`${API_URL}/preview`, {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+
+    setProcessedPreview(
+      data.images.map((img: string) => `data:image/png;base64,${img}`)
+    );
+  };
+
+  const handleFile = (f: File) => {
+    setFile(f);
+    generatePreview(f);
+    fetchPreview(f);
+  };
+
+  // =========================
+  // 🚀 UPLOAD
+  // =========================
+  const upload = () => {
+    if (!file) return alert("Upload file");
 
     setLoading(true);
     setProgress(0);
@@ -63,107 +85,78 @@ function App() {
     formData.append("file", file);
     formData.append("size", size);
     formData.append("output", output);
+    formData.append("zip_enabled", zip ? "1" : "0");
 
     const xhr = new XMLHttpRequest();
-
     xhr.open("POST", `${API_URL}/process`);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
-        const percent = (e.loaded / e.total) * 100;
-        setProgress(Math.round(percent));
+        setProgress(Math.round((e.loaded / e.total) * 100));
       }
     };
 
     xhr.onload = () => {
-      const blob = new Blob([xhr.response], { type: "application/zip" });
-
+      const blob = new Blob([xhr.response]);
       const url = window.URL.createObjectURL(blob);
+
       const a = document.createElement("a");
       a.href = url;
-      a.download = "output.zip";
+      a.download = zip ? "output.zip" : "output.pdf";
       a.click();
 
       setLoading(false);
-      setProgress(0);
     };
 
     xhr.responseType = "blob";
     xhr.send(formData);
   };
 
-  // =========================
-  // 📂 FILE SELECT
-  // =========================
-  const handleFile = (f: File) => {
-    setFile(f);
-    generatePreview(f);
-  };
-
   return (
     <div className="container">
       <h1>📦 Label Processor</h1>
-      <p className="subtitle">
-        {output === "combined"
-          ? "Preview: Combined Label"
-          : "Preview: Shipping + Invoice"}
-      </p>
 
-      {/* DROPZONE */}
-      <div
-        className={`dropzone ${dragActive ? "active" : ""}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={() => setDragActive(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragActive(false);
-          if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-        }}
-        onClick={() => document.getElementById("fileInput")?.click()}
-      >
-        {file ? <p>📄 {file.name}</p> : <p>Drag & drop PDF or click</p>}
-
-        <input
-          id="fileInput"
-          type="file"
-          hidden
-          accept="application/pdf"
-          onChange={(e) =>
-            e.target.files?.[0] && handleFile(e.target.files[0])
-          }
-        />
-      </div>
+      {/* UPLOAD */}
+      <input
+        type="file"
+        accept="application/pdf"
+        onChange={(e) => e.target.files && handleFile(e.target.files[0])}
+      />
 
       {/* OPTIONS */}
       <div className="options">
-        <div>
-          <label>Size</label>
-          <select value={size} onChange={(e) => setSize(e.target.value)}>
-            <option value="3x5">3x5</option>
-            <option value="4x6">4x6</option>
-          </select>
+        <div className="toggle">
+          <button onClick={() => setSize("3x5")}>3x5</button>
+          <button onClick={() => setSize("4x6")}>4x6</button>
         </div>
 
-        <div>
-          <label>Output</label>
-          <select value={output} onChange={(e) => setOutput(e.target.value)}>
-            <option value="separate">Separate</option>
-            <option value="combined">Combined</option>
-          </select>
+        <div className="toggle">
+          <button onClick={() => setOutput("separate")}>Separate</button>
+          <button onClick={() => setOutput("combined")}>Combined</button>
+        </div>
+
+        <div className="toggle">
+          <button onClick={() => setZip(true)}>ZIP</button>
+          <button onClick={() => setZip(false)}>PDF</button>
         </div>
       </div>
 
       {/* PREVIEW */}
-      {previewUrls.length > 0 && (
-        <div className="preview">
+      <div className="preview-container">
+        <div>
+          <h3>Original</h3>
           {previewUrls.map((url, i) => (
-            <img key={i} src={url} alt="preview" />
+            <img key={i} src={url} />
           ))}
         </div>
-      )}
+
+        <div>
+          <h3>Processed</h3>
+          {processedPreview.map((url, i) => (
+            <img key={i} src={url} />
+          ))}
+        </div>
+      </div>
 
       {/* PROGRESS */}
       {loading && (
@@ -172,9 +165,8 @@ function App() {
         </div>
       )}
 
-      {/* BUTTON */}
-      <button onClick={upload} disabled={loading}>
-        {loading ? `Uploading... ${progress}%` : "🚀 Process PDF"}
+      <button onClick={upload}>
+        {loading ? `${progress}%` : "🚀 Process"}
       </button>
     </div>
   );
