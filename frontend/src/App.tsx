@@ -91,14 +91,16 @@ function App() {
         a.href = url;
         a.download = zip ? "labels.zip" : "label.pdf";
         a.click();
+        window.URL.revokeObjectURL(url); // Clean up after download
       } else {
-        // Extract exact error from the blob response
-        const text = await xhr.response.text();
+        // 💡 FIX: Blobs must be converted to text to read the JSON error
+        const blob = xhr.response;
+        const text = await blob.text(); 
         try {
           const errorObj = JSON.parse(text);
-          alert(`❌ Process Error: ${errorObj.error}\nCheck Render logs for full trace.`);
+          alert(`❌ Process Error: ${errorObj.error}`);
         } catch {
-          alert("❌ Critical Server Error (500). Check Render Logs.");
+          alert("❌ Server Error (500). Check Render Logs.");
         }
       }
       setLoading(false);

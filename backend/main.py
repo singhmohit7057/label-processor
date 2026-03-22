@@ -111,6 +111,10 @@ async def preview(file: UploadFile = File(...), size: str = Form("4x6")):
     finally:
         gc.collect()
 
+
 @app.get("/")
-def health():
-    return {"status": "online"}
+def home():
+    return {
+        "status": "online",
+        "message": "Flipkart Label Processor Backend is running!"
+    }
