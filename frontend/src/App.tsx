@@ -16,7 +16,7 @@ function App() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // Clean up memory when previews change
+  // Revoke URLs to prevent memory leaks in the browser
   useEffect(() => {
     return () => {
       if (originalUrl) URL.revokeObjectURL(originalUrl);
@@ -35,12 +35,18 @@ function App() {
         body: formData,
       });
 
+      if (!res.ok) {
+        const errData = await res.json();
+        alert(`Preview Failed: ${errData.error}`);
+        return;
+      }
+
       const data = await res.json();
       if (data.images) {
         setProcessedPreview(data.images.map((img: string) => `data:image/png;base64,${img}`));
       }
     } catch (err) {
-      console.error("Preview failed", err);
+      console.error("DEBUG: Preview Network Error", err);
     } finally {
       setPreviewLoading(false);
     }
@@ -78,7 +84,7 @@ function App() {
       if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100));
     };
 
-    xhr.onload = () => {
+    xhr.onload = async () => {
       if (xhr.status === 200) {
         const url = window.URL.createObjectURL(xhr.response);
         const a = document.createElement("a");
@@ -86,8 +92,20 @@ function App() {
         a.download = zip ? "labels.zip" : "label.pdf";
         a.click();
       } else {
-        alert("Processing failed. Check backend logs.");
+        // Extract exact error from the blob response
+        const text = await xhr.response.text();
+        try {
+          const errorObj = JSON.parse(text);
+          alert(`❌ Process Error: ${errorObj.error}\nCheck Render logs for full trace.`);
+        } catch {
+          alert("❌ Critical Server Error (500). Check Render Logs.");
+        }
       }
+      setLoading(false);
+    };
+
+    xhr.onerror = () => {
+      alert("❌ Network Error: Could not connect to backend. Check CORS or Render status.");
       setLoading(false);
     };
 
@@ -125,7 +143,7 @@ function App() {
           {originalUrl && <embed src={originalUrl} width="100%" height="200px" type="application/pdf" />}
         </div>
         <div className="preview-box">
-          <h3>Processed</h3>
+          <h3>Processed Preview</h3>
           {previewLoading ? <p>Processing...</p> : (
             processedPreview.map((src, i) => <img key={i} src={src} alt="preview" />)
           )}

@@ -1,11 +1,17 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 import io
 import zipfile
 import gc
+import logging
+import traceback
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from processor import pdf_to_images, process_page
+
+# Setup logging for Render console
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -63,7 +69,7 @@ async def process(
                 headers={"Content-Disposition": "attachment; filename=labels.zip"}
             )
 
-        # Default: Return first page as a combined PDF if ZIP is disabled
+        # Single PDF Response
         s, inv = process_page(pages[0], size)
         buffer = io.BytesIO()
         s.save(buffer, "PDF", save_all=True, append_images=[inv])
@@ -71,7 +77,12 @@ async def process(
         return StreamingResponse(buffer, media_type="application/pdf")
 
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        error_stack = traceback.format_exc()
+        logger.error(f"❌ PROCESS ERROR:\n{error_stack}")
+        return JSONResponse(
+            status_code=500, 
+            content={"error": str(e), "details": error_stack}
+        )
     finally:
         gc.collect()
 
@@ -80,8 +91,6 @@ async def preview(file: UploadFile = File(...), size: str = Form("4x6")):
     try:
         pdf_bytes = await file.read()
         pages = pdf_to_images(pdf_bytes)
-        
-        # Only preview the first page to save bandwidth
         shipping, invoice = process_page(pages[0], size)
         
         import base64
@@ -93,7 +102,12 @@ async def preview(file: UploadFile = File(...), size: str = Form("4x6")):
             
         return {"images": results}
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        error_stack = traceback.format_exc()
+        logger.error(f"❌ PREVIEW ERROR:\n{error_stack}")
+        return JSONResponse(
+            status_code=500, 
+            content={"error": str(e), "details": error_stack}
+        )
     finally:
         gc.collect()
 
