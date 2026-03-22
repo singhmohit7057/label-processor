@@ -9,6 +9,12 @@ from processor import pdf_to_images, process_page
 
 app = FastAPI()
 
+# 1. Clearer, more explicit CORS setup
+origins = [
+    "https://label-processor.vercel.app", # Your specific frontend
+    "http://localhost:5173",              # Local development
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], # Change this to your Vercel URL in production
@@ -16,6 +22,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 2. Add a manual OPTIONS handler (sometimes required by Render/Vercel)
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str):
+    return {}
 
 @app.post("/process")
 async def process(
