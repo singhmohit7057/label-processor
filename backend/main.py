@@ -34,7 +34,14 @@ app.add_middleware(
 @app.options("/preview")
 @app.options("/{rest_of_path:path}")
 async def preflight_handler():
-    return Response(status_code=200)
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
 
 @app.post("/process")
 async def process(
