@@ -30,9 +30,11 @@ app.add_middleware(
 )
 
 # 2. Add a manual OPTIONS handler (sometimes required by Render/Vercel)
+@app.options("/process")
+@app.options("/preview")
 @app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str):
-    return {}
+async def preflight_handler():
+    return Response(status_code=200)
 
 @app.post("/process")
 async def process(
@@ -113,8 +115,5 @@ async def preview(file: UploadFile = File(...), size: str = Form("4x6")):
 
 
 @app.get("/")
-def home():
-    return {
-        "status": "online",
-        "message": "Flipkart Label Processor Backend is running!"
-    }
+async def home():
+    return {"status": "online", "message": "Backend is running!"}
